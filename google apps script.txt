@@ -1,0 +1,430 @@
+// ==================== ОСНОВНОЙ ОБРАБОТЧИК ====================
+
+function doGet(e) {
+  try {
+    const params = e.parameter;
+    const action = params.action;
+    const data = params;
+    
+    let result;
+    switch(action) {
+      case 'register': result = handleRegister(data); break;
+      case 'login': result = handleLogin(data); break;
+      case 'addPost': result = handleAddPost(data); break;
+      case 'getPosts': result = handleGetPosts(data); break;
+      case 'editPost': result = handleEditPost(data); break;
+      case 'deletePost': result = handleDeletePost(data); break;
+      case 'subscribe': result = handleSubscribe(data); break;
+      case 'unsubscribe': result = handleUnsubscribe(data); break;
+      case 'addComment': result = handleAddComment(data); break;
+      case 'getComments': result = handleGetComments(data); break;
+      case 'getUserById': result = handleGetUserById(data); break;
+      case 'test': result = { success: true, message: '✅ Сервер работает!' }; break;
+      default: result = { success: false, error: '❌ Неизвестное действие' };
+    }
+    
+    return ContentService
+      .createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+      
+  } catch (error) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: error.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
+function getSheet(name) {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+}
+
+function getNextId(sheet) {
+  let lastRow = sheet.getLastRow();
+  if (lastRow < 1) return 1;
+  
+  const lastId = sheet.getRange(lastRow, 1).getValue();
+  
+  if (typeof lastId === 'number') {
+    return lastId + 1;
+  }
+  
+  if (typeof lastId === 'string') {
+    const match = lastId.match(/\d+$/);
+    if (match) {
+      return parseInt(match[0]) + 1;
+    }
+  }
+  
+  return lastRow + 1;
+}
+
+function getUserByEmail(email) {
+  const sheet = getSheet('Users');
+  if (!sheet) return null;
+  const data = sheet.getDataRange().getValues();
+  const searchEmail = String(email).trim().toLowerCase();
+  
+  for (let i = 1; i < data.length; i++) {
+    const userEmail = String(data[i][2] || '').trim().toLowerCase();
+    if (userEmail === searchEmail) {
+      return {
+        id: String(data[i][0]),
+        name: String(data[i][1] || ''),
+        email: String(data[i][2] || ''),
+        password: String(data[i][3] || ''),
+        subscriptions: String(data[i][4] || '')
+      };
+    }
+  }
+  return null;
+}
+
+function getUserById(id) {
+  const sheet = getSheet('Users');
+  if (!sheet) return null;
+  const data = sheet.getDataRange().getValues();
+  const searchId = String(id);
+  
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === searchId) {
+      return {
+        id: String(data[i][0]),
+        name: String(data[i][1] || ''),
+        email: String(data[i][2] || ''),
+        subscriptions: String(data[i][4] || '')
+      };
+    }
+  }
+  return null;
+}
+
+function updateUserSubscriptions(userId, subsArray) {
+  const sheet = getSheet('Users');
+  const data = sheet.getDataRange().getValues();
+  
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(userId)) {
+      sheet.getRange(i + 1, 5).setValue(subsArray.join(','));
+      return true;
+    }
+  }
+  return false;
+}
+
+// ==================== ОБРАБОТЧИКИ ДЕЙСТВИЙ ====================
+
+function handleRegister(data) {
+  const { name, email, password } = data;
+  
+  if (!name || !email || !password) {
+    return { success: false, error: 'Все поля обязательны для заполнения' };
+  }
+  
+  const sheet = getSheet('Users');
+  if (!sheet) {
+    return { success: false, error: 'Таблица Users не найдена' };
+  }
+  
+  if (getUserByEmail(email)) {
+    return { success: false, error: 'Пользователь с такой почтой уже существует' };
+  }
+
+  const newId = getNextId(sheet);
+  sheet.appendRow([newId, name, email, password, '']);
+  return { success: true, user: { id: newId, name, email } };
+}
+
+function handleLogin(data) {
+  const { email, password } = data;
+  
+  if (!email || !password) {
+    return { success: false, error: 'Все поля обязательны для заполнения' };
+  }
+  
+  const user = getUserByEmail(email);
+  
+  if (!user) {
+    return { success: false, error: 'Пользователь не найден' };
+  }
+  
+  if (user.password !== String(password)) {
+    return { success: false, error: 'Неверный пароль' };
+  }
+  
+  return { 
+    success: true, 
+    user: { 
+      id: user.id, 
+      name: user.name, 
+      email: user.email, 
+      subscriptions: user.subscriptions 
+    } 
+  };
+}
+
+function handleAddPost(data) {
+  const { userId, title, content, tags, isPrivate, allowedUsers } = data;
+  
+  if (!userId || !title || !content) {
+    return { success: false, error: 'Заголовок и текст поста обязательны' };
+  }
+  
+  const sheet = getSheet('Posts');
+  if (!sheet) {
+    return { success: false, error: 'Таблица Posts не найдена' };
+  }
+  
+  const newId = getNextId(sheet);
+  const date = new Date().toISOString();
+  const allowedStr = allowedUsers || '';
+  
+  sheet.appendRow([
+    newId, 
+    userId, 
+    title, 
+    content, 
+    tags || '', 
+    isPrivate === 'true' ? 'true' : 'false', 
+    date, 
+    allowedStr
+  ]);
+  
+  return { success: true, postId: newId };
+}
+
+function handleGetPosts(data) {
+  const sheet = getSheet('Posts');
+  if (!sheet) {
+    return { success: false, error: 'Таблица Posts не найдена' };
+  }
+  
+  const dataRows = sheet.getDataRange().getValues();
+  const posts = [];
+  
+  const currentUserId = data.userId;
+  const onlyPrivate = data.isPrivate === 'true';
+  const onlyPublic = data.isPrivate === 'false';
+
+  for (let i = 1; i < dataRows.length; i++) {
+    const row = dataRows[i];
+    const userId = String(row[1] || '');
+    const privateFlag = String(row[5]) === 'true';
+    
+    // Проверка фильтров
+    if (onlyPrivate && !privateFlag) continue;
+    if (onlyPublic && privateFlag) continue;
+    
+    // Проверка доступа к посту
+    let canView = false;
+    if (!privateFlag) {
+      canView = true;
+    } else {
+      // Автор всегда видит свой пост
+      if (String(currentUserId) === userId) {
+        canView = true;
+      } else {
+        // Проверка разрешенных пользователей
+        const allowedUsersStr = String(row[7] || '');
+        const allowedArray = allowedUsersStr ? allowedUsersStr.split(',').map(id => String(id).trim()) : [];
+        if (allowedArray.includes(String(currentUserId))) {
+          canView = true;
+        }
+      }
+    }
+    
+    if (canView) {
+      posts.push({
+        id: String(row[0]),
+        userId: userId,
+        title: String(row[2] || ''),
+        content: String(row[3] || ''),
+        tags: String(row[4] || ''),
+        isPrivate: privateFlag,
+        createdAt: String(row[6] || ''),
+        allowedUsers: String(row[7] || '').split(',').filter(id => id).map(id => Number(id))
+      });
+    }
+  }
+  
+  // Сортировка по дате (сначала новые)
+  posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return { success: true, posts };
+}
+
+function handleEditPost(data) {
+  const { postId, userId, title, content, tags, isPrivate, allowedUsers } = data;
+  
+  if (!postId || !userId) {
+    return { success: false, error: 'Недостаточно данных для редактирования' };
+  }
+  
+  const sheet = getSheet('Posts');
+  if (!sheet) {
+    return { success: false, error: 'Таблица Posts не найдена' };
+  }
+  
+  const dataRows = sheet.getDataRange().getValues();
+  
+  for (let i = 1; i < dataRows.length; i++) {
+    if (String(dataRows[i][0]) === String(postId)) {
+      if (String(dataRows[i][1]) !== String(userId)) {
+        return { success: false, error: 'Нет прав для редактирования' };
+      }
+      
+      const allowedStr = allowedUsers || '';
+      sheet.getRange(i + 1, 3).setValue(title);
+      sheet.getRange(i + 1, 4).setValue(content);
+      sheet.getRange(i + 1, 5).setValue(tags || '');
+      sheet.getRange(i + 1, 6).setValue(isPrivate === 'true' ? 'true' : 'false');
+      sheet.getRange(i + 1, 8).setValue(allowedStr);
+      return { success: true };
+    }
+  }
+  return { success: false, error: 'Пост не найден' };
+}
+
+function handleDeletePost(data) {
+  const { postId, userId } = data;
+  
+  if (!postId || !userId) {
+    return { success: false, error: 'Недостаточно данных для удаления' };
+  }
+  
+  const sheet = getSheet('Posts');
+  if (!sheet) {
+    return { success: false, error: 'Таблица Posts не найдена' };
+  }
+  
+  const dataRows = sheet.getDataRange().getValues();
+  
+  for (let i = 1; i < dataRows.length; i++) {
+    if (String(dataRows[i][0]) === String(postId)) {
+      if (String(dataRows[i][1]) !== String(userId)) {
+        return { success: false, error: 'Нет прав для удаления' };
+      }
+      sheet.deleteRow(i + 1);
+      return { success: true };
+    }
+  }
+  return { success: false, error: 'Пост не найден' };
+}
+
+function handleSubscribe(data) {
+  const { currentUserId, targetUserId } = data;
+  
+  if (!currentUserId || !targetUserId) {
+    return { success: false, error: 'Недостаточно данных для подписки' };
+  }
+  
+  const sheet = getSheet('Users');
+  if (!sheet) {
+    return { success: false, error: 'Таблица Users не найдена' };
+  }
+  
+  const dataRows = sheet.getDataRange().getValues();
+  
+  for (let i = 1; i < dataRows.length; i++) {
+    if (String(dataRows[i][0]) === String(currentUserId)) {
+      let subs = String(dataRows[i][4] || '');
+      let subsArray = subs ? subs.split(',').map(id => String(id).trim()) : [];
+      
+      // Проверяем, не подписан ли уже
+      if (!subsArray.includes(String(targetUserId))) {
+        subsArray.push(String(targetUserId));
+        sheet.getRange(i + 1, 5).setValue(subsArray.join(','));
+      }
+      return { success: true, subscriptions: subsArray };
+    }
+  }
+  return { success: false, error: 'Пользователь не найден' };
+}
+
+function handleUnsubscribe(data) {
+  const { currentUserId, targetUserId } = data;
+  
+  if (!currentUserId || !targetUserId) {
+    return { success: false, error: 'Недостаточно данных для отписки' };
+  }
+  
+  const sheet = getSheet('Users');
+  if (!sheet) {
+    return { success: false, error: 'Таблица Users не найдена' };
+  }
+  
+  const dataRows = sheet.getDataRange().getValues();
+  
+  for (let i = 1; i < dataRows.length; i++) {
+    if (String(dataRows[i][0]) === String(currentUserId)) {
+      let subs = String(dataRows[i][4] || '');
+      let subsArray = subs ? subs.split(',').map(id => String(id).trim()) : [];
+      subsArray = subsArray.filter(id => id !== String(targetUserId));
+      sheet.getRange(i + 1, 5).setValue(subsArray.join(','));
+      return { success: true, subscriptions: subsArray };
+    }
+  }
+  return { success: false, error: 'Пользователь не найден' };
+}
+
+function handleAddComment(data) {
+  const { postId, userId, text } = data;
+  
+  if (!postId || !userId || !text) {
+    return { success: false, error: 'Все поля комментария обязательны' };
+  }
+  
+  const sheet = getSheet('Comments');
+  if (!sheet) {
+    return { success: false, error: 'Таблица Comments не найдена' };
+  }
+  
+  const newId = getNextId(sheet);
+  const date = new Date().toISOString();
+  sheet.appendRow([newId, postId, userId, text, date]);
+  return { success: true, commentId: newId };
+}
+
+function handleGetComments(data) {
+  const { postId } = data;
+  
+  if (!postId) {
+    return { success: false, error: 'ID поста не указан' };
+  }
+  
+  const sheet = getSheet('Comments');
+  if (!sheet) {
+    return { success: false, error: 'Таблица Comments не найдена' };
+  }
+  
+  const dataRows = sheet.getDataRange().getValues();
+  const comments = [];
+  
+  for (let i = 1; i < dataRows.length; i++) {
+    if (String(dataRows[i][1]) === String(postId)) {
+      comments.push({
+        id: String(dataRows[i][0]),
+        postId: String(dataRows[i][1]),
+        userId: String(dataRows[i][2]),
+        text: String(dataRows[i][3] || ''),
+        createdAt: String(dataRows[i][4] || '')
+      });
+    }
+  }
+  
+  // Сортировка по дате (сначала старые)
+  comments.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  return { success: true, comments };
+}
+
+function handleGetUserById(data) {
+  const { userId } = data;
+  
+  if (!userId) {
+    return { success: false, error: 'ID пользователя не указан' };
+  }
+  
+  const user = getUserById(userId);
+  if (!user) return { success: false, error: 'Пользователь не найден' };
+  return { success: true, user };
+}

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Мой Блог</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <!-- ЭКРАН РЕГИСТРАЦИИ -->
+  <div id="registerScreen" class="screen active">
+    <h1>📝 Регистрация</h1>
+    <div class="form-group"><label>Имя</label><input id="regName" type="text" placeholder="Введите имя"></div>
+    <div class="form-group"><label>Email</label><input id="regEmail" type="email" placeholder="Введите email"></div>
+    <div class="form-group"><label>Пароль</label><input id="regPassword" type="password" placeholder="Введите пароль"></div>
+    <button onclick="register()">Зарегистрироваться</button>
+    <p style="margin-top:15px;">Уже есть аккаунт? <a href="#" onclick="showScreen('loginScreen')">Войти</a></p>
+    <div id="regMessage" style="margin-top:10px;"></div>
+  </div>
+
+  <!-- ЭКРАН ВХОДА -->
+  <div id="loginScreen" class="screen">
+    <h1>🔑 Вход</h1>
+    <div class="form-group"><label>Email</label><input id="loginEmail" type="email" placeholder="Введите email"></div>
+    <div class="form-group"><label>Пароль</label><input id="loginPassword" type="password" placeholder="Введите пароль"></div>
+    <button onclick="login()">Войти</button>
+    <p style="margin-top:15px;">Нет аккаунта? <a href="#" onclick="showScreen('registerScreen')">Зарегистрироваться</a></p>
+    <div id="loginMessage" style="margin-top:10px;"></div>
+  </div>
+
+  <!-- ГЛАВНАЯ -->
+  <div id="mainScreen" class="screen">
+    <div class="nav-bar">
+      <button onclick="loadFeed()">🏠 Моя лента</button>
+      <button onclick="loadRecommendations()" class="btn-recommendations">🔥 Рекомендации</button>
+      <button onclick="showCreatePost()">➕ Новый пост</button>
+      <button onclick="loadMyProfile()">👤 Мой профиль</button>
+      <div class="user-info">
+        <span class="user-name" id="userNameDisplay">Пользователь</span>
+        <button onclick="logout()" class="btn-danger" style="padding:6px 14px;">Выйти</button>
+      </div>
+    </div>
+    <div id="feedContainer"><p>Загрузка...</p></div>
+  </div>
+
+  <!-- МОДАЛКА ПОСТА -->
+  <div id="postModal" class="modal">
+    <div class="modal-content">
+      <button class="modal-close" onclick="closeModal('postModal')">&times;</button>
+      <h2 id="postModalTitle">Создать пост</h2>
+      <input type="hidden" id="editPostId">
+      <div class="form-group"><label>Заголовок</label><input id="postTitle" placeholder="Заголовок"></div>
+      <div class="form-group"><label>Контент</label><textarea id="postContent" placeholder="Текст поста..."></textarea></div>
+      <div class="form-group"><label>Теги (через запятую)</label><input id="postTags" placeholder="js, react, уроки"></div>
+      <div class="form-group">
+        <label>Тип доступа</label>
+        <select id="postPrivacy">
+          <option value="false">Публичный</option>
+          <option value="true">Приватный (только по запросу)</option>
+        </select>
+      </div>
+      <div class="form-group" id="allowedUsersGroup" style="display:none;">
+        <label>ID пользователей с доступом (через запятую)</label>
+        <input id="postAllowedUsers" placeholder="2, 5, 8">
+      </div>
+      <button onclick="savePost()">Сохранить</button>
+    </div>
+  </div>
+
+  <!-- МОДАЛКА КОММЕНТАРИЕВ -->
+  <div id="commentsModal" class="modal">
+    <div class="modal-content">
+      <button class="modal-close" onclick="closeModal('commentsModal')">&times;</button>
+      <h2>💬 Комментарии</h2>
+      <input type="hidden" id="commentPostId">
+      <div id="commentsContainer"><p>Комментариев нет</p></div>
+      <div class="form-group"><label>Ваш комментарий</label><textarea id="commentText" placeholder="Напишите комментарий..."></textarea></div>
+      <button onclick="addComment()">Отправить</button>
+    </div>
+  </div>
+  <script src="script.js"></script>
+</div>
+</body>
+</html>
