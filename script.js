@@ -1,5 +1,4 @@
 // ==================== КОНФИГУРАЦИЯ ====================
-// ВСТАВЬТЕ ВАШ URL ОТ GOOGLE APPS SCRIPT
 const API_URL = 'https://script.google.com/macros/s/AKfycbz_R-gCeC2vlTvTXdphkysUgcz4_jnKxqG2s_cmel81LaVOA-1bUARZ4kdEirSZaMNqBQ/exec';
 
 // ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
@@ -462,7 +461,6 @@ async function loadMyProfile() {
     }
   }
 }
-
 // ==================== КОММЕНТАРИИ ====================
 async function showComments(postId) {
   document.getElementById('commentPostId').value = postId;
