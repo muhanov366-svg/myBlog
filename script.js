@@ -5,7 +5,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbz_R-gCeC2vlTvTXdphkysU
 let currentUser = null;
 let allPosts = [];
 let allUsersCache = {};
-let currentMode = 'feed'; // feed | recommendations | profile
+let currentMode = 'feed'; // feed | recommendations | profile | tags
 
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 function showScreen(screenId) {
@@ -44,6 +44,14 @@ async function loadUserNames(userIds) {
       }
     }
   }
+}
+
+// Возвращает JS-код для кнопки «Показать все» в зависимости от текущего режима
+function getBackAction() {
+  if (currentMode === 'recommendations') return 'loadRecommendations()';
+  if (currentMode === 'profile') return 'loadMyProfile()';
+  if (currentMode === 'tags') return 'showAllTags()';
+  return 'loadFeed()';
 }
 
 // ==================== API ЗАПРОСЫ ====================
@@ -133,12 +141,12 @@ function renderPosts(posts, showSubscribeButtons = false, title = '') {
   
   let html = '';
   
-  // Заголовок для рекомендаций
+  // Заголовок для рекомендаций / тегов
   if (title) {
     html += `
       <div class="recommendations-header">
         <strong>${title}</strong>
-        <p>Здесь собраны все публичные посты. Подпишитесь на авторов, чтобы видеть их в своей ленте!</p>
+        <p>Нажмите на тег, чтобы отфильтровать посты по нему.</p>
       </div>
     `;
   }
@@ -149,7 +157,7 @@ function renderPosts(posts, showSubscribeButtons = false, title = '') {
   
   for (const post of posts) {
     const authorName = getUserNameSync(post.userId);
-    const tags = post.tags ? post.tags.split(',').map(t => t.trim()) : [];
+    const tags = post.tags ? post.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
     const isPrivate = post.isPrivate;
     const badge = isPrivate 
       ? '<span class="badge-private">🔒 Приватный</span>' 
@@ -204,14 +212,13 @@ async function loadFeed() {
     : [];
   if (!subs.includes(String(currentUser.id))) subs.push(String(currentUser.id));
   
-  // Загружаем имена авторов
   const result = await apiCall('getPosts', { userId: currentUser.id });
   if (result.success) {
     const userIds = result.posts.map(p => p.userId);
     await loadUserNames(userIds);
     
     let posts = result.posts.filter(post => subs.includes(String(post.userId)));
-    allPosts = posts;
+    allPosts = posts; // ✅ обновляем
     renderPosts(posts, false);
   } else {
     document.getElementById('feedContainer').innerHTML = `<p style="color:red;">❌ Ошибка: ${result.error}</p>`;
@@ -227,11 +234,12 @@ async function loadRecommendations() {
   
   const result = await apiCall('getPosts', { 
     userId: currentUser.id,
-    isPrivate: 'false' // Только публичные посты
+    isPrivate: 'false'
   });
   
   if (result.success) {
     const posts = result.posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    allPosts = posts; // ✅ обновляем
     
     if (posts.length === 0) {
       document.getElementById('feedContainer').innerHTML = `
@@ -253,28 +261,92 @@ async function loadRecommendations() {
 
 // ==================== ТЕГИ ====================
 function filterByTag(tag) {
+  const searchTag = String(tag).trim().toLowerCase();
+  if (!searchTag) return;
+  
   const filtered = allPosts.filter(post => {
     if (!post.tags) return false;
-    return post.tags.split(',').map(t => t.trim()).includes(tag);
+    return post.tags.split(',')
+      .map(t => t.trim().toLowerCase())
+      .filter(Boolean)
+      .includes(searchTag);
   });
+  
+  const backAction = getBackAction();
   
   if (filtered.length === 0) {
     document.getElementById('feedContainer').innerHTML = `
+      <h2>🏷️ #${tag}</h2>
       <p>Нет постов с тегом #${tag}</p>
-      <button onclick="${currentMode === 'recommendations' ? 'loadRecommendations()' : 'loadFeed()'}" style="margin-top:15px;">
-        🔄 Показать все
-      </button>
+      <button onclick="${backAction}" style="margin-top:15px;">🔄 Показать все</button>
     `;
-  } else {
-    const showSubscribe = currentMode === 'recommendations';
-    renderPosts(filtered, showSubscribe, `#${tag}`);
-    const container = document.getElementById('feedContainer');
-    container.innerHTML += `
-      <button onclick="${currentMode === 'recommendations' ? 'loadRecommendations()' : 'loadFeed()'}" style="margin-top:15px;">
-        🔄 Показать все посты
-      </button>
-    `;
+    return;
   }
+  
+  const showSubscribe = currentMode === 'recommendations';
+  renderPosts(filtered, showSubscribe, `🏷️ #${tag}`);
+  
+  const container = document.getElementById('feedContainer');
+  container.innerHTML += `
+    <button onclick="${backAction}" style="margin-top:15px;">
+      🔄 Показать все посты
+    </button>
+  `;
+}
+
+// Поиск по тегу из поля ввода
+function searchByTag() {
+  const input = document.getElementById('tagSearchInput');
+  if (!input) return;
+  const tag = input.value.trim();
+  if (!tag) return alert('Введите тег для поиска');
+  filterByTag(tag);
+}
+
+// Экран «Все теги»
+function showAllTags() {
+  currentMode = 'tags';
+  const container = document.getElementById('feedContainer');
+  
+  const tagsSet = new Set();
+  allPosts.forEach(p => {
+    if (p.tags) {
+      p.tags.split(',').forEach(t => {
+        const trimmed = t.trim();
+        if (trimmed) tagsSet.add(trimmed);
+      });
+    }
+  });
+  
+  const tags = [...tagsSet].sort((a, b) => a.localeCompare(b));
+  
+  if (tags.length === 0) {
+    container.innerHTML = `
+      <h2>📋 Все теги</h2>
+      <p>Тегов пока нет. Создайте пост с тегами!</p>
+      <button onclick="loadFeed()" style="margin-top:15px;">🔄 Вернуться в ленту</button>
+    `;
+    return;
+  }
+  
+  container.innerHTML = `
+    <h2>📋 Все теги (${tags.length})</h2>
+    <p style="color:#64748b;margin-bottom:15px;">Нажмите на тег, чтобы отфильтровать посты</p>
+    <div class="post-tags" style="gap:10px;">
+      ${tags.map(t => `<span class="post-tag" style="font-size:15px;padding:8px 16px;" onclick="filterByTag('${t}')">#${t}</span>`).join('')}
+    </div>
+    <button onclick="loadFeed()" style="margin-top:20px;">🔄 Вернуться в ленту</button>
+  `;
+}
+
+// Сортировка постов по количеству тегов
+function sortPostsByTagCount() {
+  const sorted = [...allPosts].sort((a, b) => {
+    const aCount = a.tags ? a.tags.split(',').filter(t => t.trim()).length : 0;
+    const bCount = b.tags ? b.tags.split(',').filter(t => t.trim()).length : 0;
+    return bCount - aCount;
+  });
+  renderPosts(sorted, currentMode === 'recommendations', '↕️ Сортировка по тегам');
 }
 
 // ==================== ПОДПИСКИ ====================
@@ -290,7 +362,6 @@ async function subscribeUser(userId) {
     currentUser.subscriptions = result.subscriptions.join(',');
     alert('✅ Подписка оформлена!');
     
-    // Обновляем текущий вид
     if (currentMode === 'recommendations') {
       loadRecommendations();
     } else {
@@ -373,6 +444,8 @@ async function savePost() {
     closeModal('postModal');
     if (currentMode === 'recommendations') {
       loadRecommendations();
+    } else if (currentMode === 'profile') {
+      loadMyProfile();
     } else {
       loadFeed();
     }
@@ -406,6 +479,8 @@ async function deletePost(postId) {
   if (result.success) {
     if (currentMode === 'recommendations') {
       loadRecommendations();
+    } else if (currentMode === 'profile') {
+      loadMyProfile();
     } else {
       loadFeed();
     }
@@ -433,6 +508,7 @@ async function loadMyProfile() {
   const result = await apiCall('getPosts', { userId: currentUser.id });
   if (result.success) {
     const myPosts = result.posts.filter(p => String(p.userId) === String(currentUser.id));
+    allPosts = myPosts; // ✅ обновляем для фильтра по тегам
     const postsContainer = document.getElementById('myPostsContainer');
     
     if (myPosts.length === 0) {
@@ -440,7 +516,7 @@ async function loadMyProfile() {
     } else {
       let html = '';
       for (const post of myPosts) {
-        const tags = post.tags ? post.tags.split(',').map(t => t.trim()) : [];
+        const tags = post.tags ? post.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
         const badge = post.isPrivate ? '🔒 Приватный' : '🌍 Публичный';
         html += `
           <div class="post-card">
@@ -449,7 +525,9 @@ async function loadMyProfile() {
               <span class="post-meta">${badge}</span>
             </div>
             <p>${post.content}</p>
-            <div class="post-tags">${tags.map(t => `#${t}`).join(' ')}</div>
+            <div class="post-tags">
+              ${tags.map(tag => `<span class="post-tag" onclick="filterByTag('${tag}')">#${tag}</span>`).join('')}
+            </div>
             <div class="post-actions">
               <button onclick="editPost(${post.id})">✏️ Редактировать</button>
               <button class="btn-danger" onclick="deletePost(${post.id})">🗑️ Удалить</button>
@@ -461,6 +539,7 @@ async function loadMyProfile() {
     }
   }
 }
+
 // ==================== КОММЕНТАРИИ ====================
 async function showComments(postId) {
   document.getElementById('commentPostId').value = postId;
