@@ -1,619 +1,656 @@
-/**ОСНОВНЫЕ ФУНКЦИИ:
- *  1. Регистрация и авторизация пользователей
+/**
+ * ОСНОВНЫЕ ФУНКЦИИ:
+ *  1. Регистрация и авторизация пользователей (с хэшированием пароля и токенами сессий)
  *  2. Создание, чтение, редактирование и удаление постов
  *  3. Система подписок (подписаться/отписаться)
  *  4. Комментарии к постам
- *  5. Разграничение доступа к приватным постам
- * 
+ *  5. Разграничение доступа к приватным постам + запросы доступа
+ *
  *  СТРУКТУРА ТАБЛИЦ:
- *  - Users: ID, Имя, Email, Пароль, Подписки
- *  - Posts: ID, UserID, Заголовок, Текст, Теги, Приватность, Дата, Разрешенные пользователи
- *  - Comments: ID, PostID, UserID, Текст, Дата
+ *  - Users:    ID | Имя | Email | PasswordHash | Subscriptions
+ *  - Posts:    ID | UserID | Заголовок | Текст | Теги | Приватность | Дата | Разрешенные пользователи
+ *  - Comments: ID | PostID | UserID | Текст | Дата
+ *  - Sessions: Token | UserID | CreatedAt
+ *  - AccessRequests: ID | PostID | RequesterID | Status | Date
  */
+
 function doGet(e) {
-  // Оборачиваем весь код в try-catch для перехвата любых ошибок
   try {
-    // Извлекаем параметры из запроса
-    // e - объект запроса, содержит все переданные параметры
-    const params = e.parameter;
-    // action - определяет, какое действие нужно выполнить
+    const params = e.parameter || {};
     const action = params.action;
-    // Все остальные данные хранятся в params
-    const data = params;
-    
-    // Переменная для хранения результата выполнения
+
     let result;
-    
-    // Используем switch для выбора нужного обработчика в зависимости от action
-    switch(action) {
-      // Регистрация нового пользователя
-      case 'register': 
-        result = handleRegister(data); 
-        break;
-      
-      // Вход в систему (логин)
-      case 'login': 
-        result = handleLogin(data); 
-        break;
-      
-      // Добавление нового поста
-      case 'addPost': 
-        result = handleAddPost(data); 
-        break;
-      
-      // Получение списка постов
-      case 'getPosts': 
-        result = handleGetPosts(data); 
-        break;
-      
-      // Редактирование существующего поста
-      case 'editPost': 
-        result = handleEditPost(data); 
-        break;
-      
-      // Удаление поста
-      case 'deletePost': 
-        result = handleDeletePost(data); 
-        break;
-      
-      // Подписка на пользователя
-      case 'subscribe': 
-        result = handleSubscribe(data); 
-        break;
-      
-      // Отписка от пользователя
-      case 'unsubscribe': 
-        result = handleUnsubscribe(data); 
-        break;
-      
-      // Добавление комментария к посту
-      case 'addComment': 
-        result = handleAddComment(data); 
-        break;
-      
-      // Получение комментариев к посту
-      case 'getComments': 
-        result = handleGetComments(data); 
-        break;
-      
-      // Получение информации о пользователе по ID
-      case 'getUserById': 
-        result = handleGetUserById(data); 
-        break;
-      
-      // Тестовый эндпоинт для проверки работоспособности сервера
-      case 'test': 
-        result = { success: true, message: '✅ Сервер работает!' }; 
-        break;
-      
-      // Если action не распознан, возвращаем ошибку
-      default: 
-        result = { success: false, error: '❌ Неизвестное действие' };
+    switch (action) {
+      case 'register':        result = handleRegister(params); break;
+      case 'login':           result = handleLogin(params); break;
+      case 'addPost':         result = handleAddPost(params); break;
+      case 'getPosts':        result = handleGetPosts(params); break;
+      case 'editPost':        result = handleEditPost(params); break;
+      case 'deletePost':      result = handleDeletePost(params); break;
+      case 'subscribe':       result = handleSubscribe(params); break;
+      case 'unsubscribe':     result = handleUnsubscribe(params); break;
+      case 'addComment':      result = handleAddComment(params); break;
+      case 'getComments':     result = handleGetComments(params); break;
+      case 'getUserById':     result = handleGetUserById(params); break;
+      case 'requestAccess':   result = handleRequestAccess(params); break;
+      case 'approveAccess':   result = handleApproveAccess(params); break;
+      case 'getAccessRequests': result = handleGetAccessRequests(params); break;
+      case 'test':            result = { success: true, message: '✅ Сервер работает!' }; break;
+      default:                result = { success: false, error: '❌ Неизвестное действие' };
     }
-    
-    /**
-     * Формируем ответ для клиента
-     * ContentService - специальный сервис Google Apps Script для работы с контентом
-     * createTextOutput - создает текстовый ответ
-     * setMimeType - устанавливает тип контента как JSON
-     */
+
     return ContentService
       .createTextOutput(JSON.stringify(result))
       .setMimeType(ContentService.MimeType.JSON);
-      
   } catch (error) {
-    /**
-     * Если произошла ошибка, возвращаем ее клиенту
-     */
     return ContentService
-      .createTextOutput(JSON.stringify({ 
-        success: false, 
-        error: error.message 
-      }))
+      .createTextOutput(JSON.stringify({ success: false, error: error.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
-//   ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-// ПОЛУЧЕНИЕ ТАБЛИЦЫ
+// ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
 function getSheet(name) {
-  // getActiveSpreadsheet() - получает текущую открытую таблицу
-  // getSheetByName(name) - ищет таблицу по имени
   return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
 }
 
-// ГЕНЕРАЦИЯ НОВОГО ID
+/**
+ * Безопасная генерация нового ID — максимум по столбцу + 1.
+ * Работает корректно даже после удаления строк.
+ */
 function getNextId(sheet) {
-  // Получаем номер последней заполненной строки
-  let lastRow = sheet.getLastRow();
-  
-  // Если в таблице нет данных (только заголовки или пусто)
-  if (lastRow < 1) return 1;
-  
-  // Берем значение из последней строки первой колонки
-  const lastId = sheet.getRange(lastRow, 1).getValue();
-  
-  // Если ID - число, просто увеличиваем на 1
-  if (typeof lastId === 'number') {
-    return lastId + 1;
-  }
-  
-  // Если ID - строка, пытаемся найти число в конце
-  if (typeof lastId === 'string') {
-    // Регулярное выражение ищет цифры в конце строки
-    const match = lastId.match(/\d+$/);
-    if (match) {
-      // Преобразуем найденные цифры в число и увеличиваем на 1
-      return parseInt(match[0]) + 1;
-    }
-  }
-  
-  // Запасной вариант: используем номер строки
-  return lastRow + 1;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 1;
+  const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues()
+    .flat()
+    .map(v => parseInt(v, 10))
+    .filter(n => !isNaN(n));
+  return ids.length ? Math.max(...ids) + 1 : 1;
 }
 
-// ПОИСК ПОЛЬЗОВАТЕЛЯ ПО EMAIL
-function getUserByEmail(email) {
-  // Получаем таблицу Users
-  const sheet = getSheet('Users');
-  if (!sheet) return null; // Если таблицы нет, возвращаем null
-  
-  // Получаем все данные из таблицы (двумерный массив)
+/** SHA-256 хэш пароля в hex */
+function hashPassword(password) {
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(password),
+    Utilities.Charset.UTF_8
+  );
+  return bytes.map(b => ('0' + (b & 0xFF).toString(16)).slice(-2)).join('');
+}
+
+/** Валидация email */
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim());
+}
+
+/** Нормализация списка ID "2, 5,8" -> "2,5,8" */
+function normalizeIdList(str) {
+  return String(str || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .join(',');
+}
+
+/** Преобразование строки подписок в массив */
+function parseIdList(str) {
+  return String(str || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+// ==================== СЕССИИ ====================
+
+function createSession(userId) {
+  const sheet = getSheet('Sessions');
+  if (!sheet) throw new Error('Таблица Sessions не найдена');
+  const token = Utilities.getUuid();
+  sheet.appendRow([token, String(userId), new Date().toISOString()]);
+  return token;
+}
+
+function getUserIdByToken(token) {
+  if (!token) return null;
+  const sheet = getSheet('Sessions');
+  if (!sheet) return null;
   const data = sheet.getDataRange().getValues();
-  
-  // Приводим email к единому формату (нижний регистр, без пробелов)
-  const searchEmail = String(email).trim().toLowerCase();
-  
-  // Проходим по всем строкам, начиная с 1 (пропускаем заголовок)
   for (let i = 1; i < data.length; i++) {
-    // Получаем email из третьей колонки (индекс 2)
-    const userEmail = String(data[i][2] || '').trim().toLowerCase();
-    
-    // Если email совпадает, создаем объект пользователя
-    if (userEmail === searchEmail) {
-      return {
-        id: String(data[i][0]),          // ID пользователя
-        name: String(data[i][1] || ''),  // Имя
-        email: String(data[i][2] || ''), // Email
-        password: String(data[i][3] || ''), // Пароль (в реальном проекте нужно хранить в зашифрованном виде!)
-        subscriptions: String(data[i][4] || '') // Подписки (список ID через запятую)
-      };
+    if (String(data[i][0]) === String(token)) {
+      return String(data[i][1]);
     }
   }
-  return null; // Пользователь не найден
+  return null;
 }
 
-// ПОИСК ПОЛЬЗОВАТЕЛЯ ПО ID
-function getUserById(id) {
+function destroySession(token) {
+  if (!token) return;
+  const sheet = getSheet('Sessions');
+  if (!sheet) return;
+  const data = sheet.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][0]) === String(token)) {
+      sheet.deleteRow(i + 1);
+    }
+  }
+}
+
+// ==================== ПОЛЬЗОВАТЕЛИ ====================
+
+function getUserByEmail(email) {
   const sheet = getSheet('Users');
   if (!sheet) return null;
-  
   const data = sheet.getDataRange().getValues();
-  const searchId = String(id); // Приводим к строке для сравнения
-  
+  const search = String(email).trim().toLowerCase();
   for (let i = 1; i < data.length; i++) {
-    // Сравниваем ID как строки (чтобы избежать проблем с типами)
-    if (String(data[i][0]) === searchId) {
+    const userEmail = String(data[i][2] || '').trim().toLowerCase();
+    if (userEmail === search) {
       return {
-        id: String(data[i][0]),          // ID
-        name: String(data[i][1] || ''),  // Имя
-        email: String(data[i][2] || ''), // Email
-        subscriptions: String(data[i][4] || '') // Подписки
+        id: String(data[i][0]),
+        name: String(data[i][1] || ''),
+        email: String(data[i][2] || ''),
+        passwordHash: String(data[i][3] || ''),
+        subscriptions: String(data[i][4] || '')
       };
     }
   }
   return null;
 }
 
-// ОБНОВЛЕНИЕ ПОДПИСОК ПОЛЬЗОВАТЕЛЯ
-function updateUserSubscriptions(userId, subsArray) {
+function getUserById(id) {
   const sheet = getSheet('Users');
+  if (!sheet) return null;
   const data = sheet.getDataRange().getValues();
-  
-  // Ищем пользователя по ID
+  const searchId = String(id);
   for (let i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(userId)) {
-      // Объединяем массив в строку через запятую и записываем в 5-ю колонку
-      sheet.getRange(i + 1, 5).setValue(subsArray.join(','));
-      return true;
+    if (String(data[i][0]) === searchId) {
+      return {
+        id: String(data[i][0]),
+        name: String(data[i][1] || ''),
+        email: String(data[i][2] || ''),
+        subscriptions: String(data[i][4] || '')
+      };
     }
   }
-  return false; // Пользователь не найден
+  return null;
 }
-==================================================================
-// РЕГИСТРАЦИЯ НОВОГО ПОЛЬЗОВАТЕЛЯ
+
+// ==================== РЕГИСТРАЦИЯ ====================
+
 function handleRegister(data) {
-  // Деструктуризация - извлекаем нужные поля из объекта
-  const { name, email, password } = data;
-  
-  // Проверка: все поля должны быть заполнены
+  const name = String(data.name || '').trim();
+  const email = String(data.email || '').trim();
+  const password = String(data.password || '');
+
   if (!name || !email || !password) {
     return { success: false, error: 'Все поля обязательны для заполнения' };
   }
-  
-  // Проверяем существование таблицы Users
-  const sheet = getSheet('Users');
-  if (!sheet) {
-    return { success: false, error: 'Таблица Users не найдена' };
+  if (!isValidEmail(email)) {
+    return { success: false, error: 'Некорректный email' };
   }
-  
-  // Проверяем, не занят ли email (уникальность)
+  if (password.length < 6) {
+    return { success: false, error: 'Пароль должен быть не менее 6 символов' };
+  }
+
+  const sheet = getSheet('Users');
+  if (!sheet) return { success: false, error: 'Таблица Users не найдена' };
+
   if (getUserByEmail(email)) {
     return { success: false, error: 'Пользователь с такой почтой уже существует' };
   }
 
-  // Генерируем новый ID
   const newId = getNextId(sheet);
-   
-  // Возвращаем успешный результат с данными нового пользователя
-  return { 
-    success: true, 
-    user: { id: newId, name, email } 
+  const passwordHash = hashPassword(password);
+
+  // ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ: реально сохраняем пользователя
+  sheet.appendRow([newId, name, email, passwordHash, '']);
+
+  const token = createSession(newId);
+
+  return {
+    success: true,
+    token,
+    user: { id: String(newId), name, email, subscriptions: '' }
   };
 }
 
-// ВХОД В СИСТЕМУ (ЛОГИН)
+// ==================== ЛОГИН ====================
+
 function handleLogin(data) {
-  const { email, password } = data;
-  
-  // Валидация входных данных
+  const email = String(data.email || '').trim();
+  const password = String(data.password || '');
+
   if (!email || !password) {
     return { success: false, error: 'Все поля обязательны для заполнения' };
   }
-  
-  // Поиск пользователя по email
+
   const user = getUserByEmail(email);
-  
-  // Если пользователь не найден
-  if (!user) {
-    return { success: false, error: 'Пользователь не найден' };
-  }
-  
-  // Проверка пароля (в реальном приложении используйте сравнение хэшей!)
-  if (user.password !== String(password)) {
+  if (!user) return { success: false, error: 'Пользователь не найден' };
+
+  if (user.passwordHash !== hashPassword(password)) {
     return { success: false, error: 'Неверный пароль' };
   }
-  
-  // Возвращаем данные пользователя (без пароля)
-  return { 
-    success: true, 
-    user: { 
-      id: user.id, 
-      name: user.name, 
-      email: user.email, 
-      subscriptions: user.subscriptions 
-    } 
+
+  const token = createSession(user.id);
+
+  return {
+    success: true,
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      subscriptions: user.subscriptions
+    }
   };
 }
 
-// ДОБАВЛЕНИЕ НОВОГО ПОСТА
-function handleAddPost(data) {
-  const { userId, title, content, tags, isPrivate, allowedUsers } = data;
-  
-  // Проверяем обязательные поля
-  if (!userId || !title || !content) {
-    return { success: false, error: 'Заголовок и текст поста обязательны' };
-  }
-  
-  const sheet = getSheet('Posts');
-  if (!sheet) {
-    return { success: false, error: 'Таблица Posts не найдена' };
-  }
-  
-  // Генерируем ID для нового поста
-  const newId = getNextId(sheet);
-  // Текущая дата в формате ISO (YYYY-MM-DDTHH:mm:ss.sssZ)
-  const date = new Date().toISOString();
-  // Приводим allowedUsers к строке (если не указан - пустая строка)
-  const allowedStr = allowedUsers || '';
-  
-  // Добавляем пост в таблицу
-  sheet.appendRow([
-    newId,                         // ID поста
-    userId,                        // ID автора
-    title,                         // Заголовок
-    content,                       // Текст
-    tags || '',                   // Теги
-    isPrivate === 'true' ? 'true' : 'false', // Приватность (строгое сравнение)
-    date,                          // Дата создания
-    allowedStr                     // Разрешенные пользователи
-  ]);
-  
-  return { success: true, postId: newId };
+// ==================== ПРОВЕРКА ТОКЕНА ====================
+
+/**
+ * Возвращает userId, если токен валиден.
+ * Все защищённые операции используют его, а не data.userId.
+ */
+function requireAuth(data) {
+  const token = data.token;
+  const userId = getUserIdByToken(token);
+  if (!userId) return null;
+  return userId;
 }
 
-// ПОЛУЧЕНИЕ СПИСКА ПОСТОВ
-function handleGetPosts(data) {
-  const sheet = getSheet('Posts');
-  if (!sheet) {
-    return { success: false, error: 'Таблица Posts не найдена' };
+// ==================== ПОСТЫ ====================
+
+function handleAddPost(data) {
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const title = String(data.title || '').trim();
+  const content = String(data.content || '').trim();
+  const tags = String(data.tags || '').trim();
+  const isPrivate = data.isPrivate === 'true';
+  const allowedUsers = normalizeIdList(data.allowedUsers);
+
+  if (!title || !content) {
+    return { success: false, error: 'Заголовок и текст поста обязательны' };
   }
-  
-  // Получаем все данные из таблицы
+  if (title.length > 200) return { success: false, error: 'Заголовок слишком длинный' };
+  if (content.length > 10000) return { success: false, error: 'Текст слишком длинный' };
+
+  const sheet = getSheet('Posts');
+  if (!sheet) return { success: false, error: 'Таблица Posts не найдена' };
+
+  const newId = getNextId(sheet);
+  const date = new Date().toISOString();
+
+  sheet.appendRow([
+    newId,
+    userId,
+    title,
+    content,
+    tags,
+    isPrivate ? 'true' : 'false',
+    date,
+    isPrivate ? allowedUsers : ''
+  ]);
+
+  return { success: true, postId: String(newId) };
+}
+
+function handleGetPosts(data) {
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const sheet = getSheet('Posts');
+  if (!sheet) return { success: false, error: 'Таблица Posts не найдена' };
+
   const dataRows = sheet.getDataRange().getValues();
   const posts = [];
-  
-  // ID текущего пользователя для проверки доступа
-  const currentUserId = data.userId;
   const onlyPrivate = data.isPrivate === 'true';
-  const onlyPublic = data.isPrivate === 'false';
+  const onlyPublic  = data.isPrivate === 'false';
 
-  // Проходим по всем строкам (начиная с 1, чтобы пропустить заголовки)
+  // Предзагрузка подтверждённых запросов доступа для текущего пользователя
+  const approvedPostIds = getApprovedPostIds(userId);
+
   for (let i = 1; i < dataRows.length; i++) {
     const row = dataRows[i];
-    const userId = String(row[1] || '');           // ID автора
-    const privateFlag = String(row[5]) === 'true'; // Приватность поста
-    
-    // Фильтр по приватности (если задан)
+    const postId = String(row[0]);
+    const postUserId = String(row[1] || '');
+    const privateFlag = String(row[5]) === 'true';
+
     if (onlyPrivate && !privateFlag) continue;
     if (onlyPublic && privateFlag) continue;
-    
-    // Проверка доступа к посту
+
     let canView = false;
-    
     if (!privateFlag) {
-      // Публичный пост - доступен всем
+      canView = true;
+    } else if (String(userId) === postUserId) {
       canView = true;
     } else {
-      // Приватный пост - доступ ограничен
-      if (String(currentUserId) === userId) {
-        // Автор всегда видит свой пост
+      const allowedArray = parseIdList(row[7]);
+      if (allowedArray.includes(String(userId)) || approvedPostIds.has(postId)) {
         canView = true;
-      } else {
-        // Проверяем, есть ли пользователь в списке разрешенных
-        const allowedUsersStr = String(row[7] || '');
-        const allowedArray = allowedUsersStr 
-          ? allowedUsersStr.split(',').map(id => String(id).trim()) 
-          : [];
-        
-        if (allowedArray.includes(String(currentUserId))) {
-          canView = true;
-        }
       }
     }
-    
-    // Если доступ есть, добавляем пост в результат
+
     if (canView) {
       posts.push({
-        id: String(row[0]),                        // ID поста
-        userId: userId,                            // ID автора
-        title: String(row[2] || ''),              // Заголовок
-        content: String(row[3] || ''),            // Текст
-        tags: String(row[4] || ''),               // Теги
-        isPrivate: privateFlag,                   // Приватность (boolean)
-        createdAt: String(row[6] || ''),          // Дата создания
-        // Преобразуем строку разрешенных пользователей в массив чисел
-        allowedUsers: String(row[7] || '')
-          .split(',')
-          .filter(id => id)
-          .map(id => Number(id))
+        id: postId,
+        userId: postUserId,
+        title: String(row[2] || ''),
+        content: String(row[3] || ''),
+        tags: String(row[4] || ''),
+        isPrivate: privateFlag,
+        createdAt: String(row[6] || ''),
+        allowedUsers: parseIdList(row[7]).map(Number).filter(n => !isNaN(n))
       });
     }
   }
-  
-  // Сортировка: сначала новые посты (по дате создания)
+
   posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  
   return { success: true, posts };
 }
 
-// РЕДАКТИРОВАНИЕ ПОСТА
 function handleEditPost(data) {
-  const { postId, userId, title, content, tags, isPrivate, allowedUsers } = data;
-  
-  // Проверяем наличие обязательных данных
-  if (!postId || !userId) {
-    return { success: false, error: 'Недостаточно данных для редактирования' };
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const postId = String(data.postId || '');
+  if (!postId) return { success: false, error: 'Не указан ID поста' };
+
+  const title = String(data.title || '').trim();
+  const content = String(data.content || '').trim();
+  const tags = String(data.tags || '').trim();
+  const isPrivate = data.isPrivate === 'true';
+  const allowedUsers = normalizeIdList(data.allowedUsers);
+
+  if (!title || !content) {
+    return { success: false, error: 'Заголовок и текст обязательны' };
   }
-  
+
   const sheet = getSheet('Posts');
-  if (!sheet) {
-    return { success: false, error: 'Таблица Posts не найдена' };
-  }
-  
+  if (!sheet) return { success: false, error: 'Таблица Posts не найдена' };
+
   const dataRows = sheet.getDataRange().getValues();
-  
-  // Ищем пост по ID
   for (let i = 1; i < dataRows.length; i++) {
-    if (String(dataRows[i][0]) === String(postId)) {
-      // Проверяем, что пользователь - автор поста
+    if (String(dataRows[i][0]) === postId) {
       if (String(dataRows[i][1]) !== String(userId)) {
         return { success: false, error: 'Нет прав для редактирования' };
       }
-      
-      // Обновляем поля поста
-      const allowedStr = allowedUsers || '';
-      sheet.getRange(i + 1, 3).setValue(title);           // Заголовок
-      sheet.getRange(i + 1, 4).setValue(content);         // Текст
-      sheet.getRange(i + 1, 5).setValue(tags || '');      // Теги
-      sheet.getRange(i + 1, 6).setValue(isPrivate === 'true' ? 'true' : 'false'); // Приватность
-      sheet.getRange(i + 1, 8).setValue(allowedStr);      // Разрешенные пользователи
-      
+      sheet.getRange(i + 1, 3).setValue(title);
+      sheet.getRange(i + 1, 4).setValue(content);
+      sheet.getRange(i + 1, 5).setValue(tags);
+      sheet.getRange(i + 1, 6).setValue(isPrivate ? 'true' : 'false');
+      sheet.getRange(i + 1, 8).setValue(isPrivate ? allowedUsers : '');
       return { success: true };
     }
   }
-  
   return { success: false, error: 'Пост не найден' };
 }
 
-// УДАЛЕНИЕ ПОСТА
 function handleDeletePost(data) {
-  const { postId, userId } = data;
-  
-  if (!postId || !userId) {
-    return { success: false, error: 'Недостаточно данных для удаления' };
-  }
-  
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const postId = String(data.postId || '');
+  if (!postId) return { success: false, error: 'Не указан ID поста' };
+
   const sheet = getSheet('Posts');
-  if (!sheet) {
-    return { success: false, error: 'Таблица Posts не найдена' };
-  }
-  
+  if (!sheet) return { success: false, error: 'Таблица Posts не найдена' };
+
   const dataRows = sheet.getDataRange().getValues();
-  
   for (let i = 1; i < dataRows.length; i++) {
-    if (String(dataRows[i][0]) === String(postId)) {
-      // Проверяем, что пользователь - автор поста
+    if (String(dataRows[i][0]) === postId) {
       if (String(dataRows[i][1]) !== String(userId)) {
         return { success: false, error: 'Нет прав для удаления' };
       }
-      
-      // Удаляем строку с постом
       sheet.deleteRow(i + 1);
       return { success: true };
     }
   }
-  
   return { success: false, error: 'Пост не найден' };
 }
 
-// ПОДПИСКА НА ПОЛЬЗОВАТЕЛЯ
+// ==================== ПОДПИСКИ ====================
+
 function handleSubscribe(data) {
-  const { currentUserId, targetUserId } = data;
-  
-  // Проверка наличия данных
-  if (!currentUserId || !targetUserId) {
-    return { success: false, error: 'Недостаточно данных для подписки' };
-  }
-  
-  const sheet = getSheet('Users');
-  if (!sheet) {
-    return { success: false, error: 'Таблица Users не найдена' };
-  }
-  
-  const dataRows = sheet.getDataRange().getValues();
-  
-  // Ищем текущего пользователя
-  for (let i = 1; i < dataRows.length; i++) {
-    if (String(dataRows[i][0]) === String(currentUserId)) {
-      // Получаем текущий список подписок
-      let subs = String(dataRows[i][4] || '');
-      let subsArray = subs ? subs.split(',').map(id => String(id).trim()) : [];
-      
-      // Проверяем, не подписан ли уже на этого пользователя
-      if (!subsArray.includes(String(targetUserId))) {
-        // Добавляем нового пользователя в список подписок
-        subsArray.push(String(targetUserId));
-        // Сохраняем обновленный список
-        sheet.getRange(i + 1, 5).setValue(subsArray.join(','));
-      }
-      
-      return { success: true, subscriptions: subsArray };
-    }
-  }
-  
-  return { success: false, error: 'Пользователь не найден' };
-}
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
 
-// ОТПИСКА ОТ ПОЛЬЗОВАТЕЛЯ
-function handleUnsubscribe(data) {
-  const { currentUserId, targetUserId } = data;
-  
-  if (!currentUserId || !targetUserId) {
-    return { success: false, error: 'Недостаточно данных для отписки' };
-  }
-  
+  const targetUserId = String(data.targetUserId || '').trim();
+  if (!targetUserId) return { success: false, error: 'Не указан пользователь' };
+  if (targetUserId === userId) return { success: false, error: 'Нельзя подписаться на себя' };
+
   const sheet = getSheet('Users');
-  if (!sheet) {
-    return { success: false, error: 'Таблица Users не найдена' };
-  }
-  
+  if (!sheet) return { success: false, error: 'Таблица Users не найдена' };
+
   const dataRows = sheet.getDataRange().getValues();
-  
   for (let i = 1; i < dataRows.length; i++) {
-    if (String(dataRows[i][0]) === String(currentUserId)) {
-      // Получаем текущий список подписок
-      let subs = String(dataRows[i][4] || '');
-      let subsArray = subs ? subs.split(',').map(id => String(id).trim()) : [];
-      
-      // Удаляем целевого пользователя из списка (фильтрация)
-      subsArray = subsArray.filter(id => id !== String(targetUserId));
-      
-      // Сохраняем обновленный список
+    if (String(dataRows[i][0]) === userId) {
+      const subsArray = parseIdList(dataRows[i][4]);
+      if (!subsArray.includes(targetUserId)) subsArray.push(targetUserId);
       sheet.getRange(i + 1, 5).setValue(subsArray.join(','));
-      
       return { success: true, subscriptions: subsArray };
     }
   }
-  
   return { success: false, error: 'Пользователь не найден' };
 }
 
-// ДОБАВЛЕНИЕ КОММЕНТАРИЯ
+function handleUnsubscribe(data) {
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const targetUserId = String(data.targetUserId || '').trim();
+  if (!targetUserId) return { success: false, error: 'Не указан пользователь' };
+
+  const sheet = getSheet('Users');
+  if (!sheet) return { success: false, error: 'Таблица Users не найдена' };
+
+  const dataRows = sheet.getDataRange().getValues();
+  for (let i = 1; i < dataRows.length; i++) {
+    if (String(dataRows[i][0]) === userId) {
+      let subsArray = parseIdList(dataRows[i][4]);
+      subsArray = subsArray.filter(id => id !== targetUserId);
+      sheet.getRange(i + 1, 5).setValue(subsArray.join(','));
+      return { success: true, subscriptions: subsArray };
+    }
+  }
+  return { success: false, error: 'Пользователь не найден' };
+}
+
+// ==================== КОММЕНТАРИИ ====================
+
 function handleAddComment(data) {
-  const { postId, userId, text } = data;
-  
-  // Проверяем, что все поля заполнены
-  if (!postId || !userId || !text) {
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const postId = String(data.postId || '').trim();
+  const text = String(data.text || '').trim();
+  if (!postId || !text) {
     return { success: false, error: 'Все поля комментария обязательны' };
   }
-  
-  const sheet = getSheet('Comments');
-  if (!sheet) {
-    return { success: false, error: 'Таблица Comments не найдена' };
+  if (text.length > 2000) {
+    return { success: false, error: 'Комментарий слишком длинный' };
   }
-  
-  // Генерируем ID для нового комментария
+
+  // Проверяем, что пост существует и доступен
+  const access = canUserViewPost(userId, postId);
+  if (!access) return { success: false, error: 'Нет доступа к посту' };
+
+  const sheet = getSheet('Comments');
+  if (!sheet) return { success: false, error: 'Таблица Comments не найдена' };
+
   const newId = getNextId(sheet);
-  // Текущая дата и время
   const date = new Date().toISOString();
-  
-  // Добавляем комментарий в таблицу
-  // Колонки: [ID, PostID, UserID, Текст, Дата]
   sheet.appendRow([newId, postId, userId, text, date]);
-  
-  return { success: true, commentId: newId };
+
+  return { success: true, commentId: String(newId) };
 }
 
-// ПОЛУЧЕНИЕ КОММЕНТАРИЕВ ПОСТА
+function canUserViewPost(userId, postId) {
+  const sheet = getSheet('Posts');
+  if (!sheet) return false;
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(postId)) {
+      const postUserId = String(data[i][1]);
+      const isPrivate = String(data[i][5]) === 'true';
+      if (!isPrivate) return true;
+      if (postUserId === String(userId)) return true;
+      const allowed = parseIdList(data[i][7]);
+      if (allowed.includes(String(userId))) return true;
+      if (getApprovedPostIds(userId).has(String(postId))) return true;
+      return false;
+    }
+  }
+  return false;
+}
+
 function handleGetComments(data) {
-  const { postId } = data;
-  
-  if (!postId) {
-    return { success: false, error: 'ID поста не указан' };
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const postId = String(data.postId || '').trim();
+  if (!postId) return { success: false, error: 'ID поста не указан' };
+
+  if (!canUserViewPost(userId, postId)) {
+    return { success: false, error: 'Нет доступа к посту' };
   }
-  
+
   const sheet = getSheet('Comments');
-  if (!sheet) {
-    return { success: false, error: 'Таблица Comments не найдена' };
-  }
-  
+  if (!sheet) return { success: false, error: 'Таблица Comments не найдена' };
+
   const dataRows = sheet.getDataRange().getValues();
   const comments = [];
-  
-  // Проходим по всем строкам и ищем комментарии для указанного поста
   for (let i = 1; i < dataRows.length; i++) {
-    if (String(dataRows[i][1]) === String(postId)) {
+    if (String(dataRows[i][1]) === postId) {
       comments.push({
-        id: String(dataRows[i][0]),          // ID комментария
-        postId: String(dataRows[i][1]),      // ID поста
-        userId: String(dataRows[i][2]),      // ID автора
-        text: String(dataRows[i][3] || ''), // Текст
-        createdAt: String(dataRows[i][4] || '') // Дата создания
+        id: String(dataRows[i][0]),
+        postId: String(dataRows[i][1]),
+        userId: String(dataRows[i][2]),
+        text: String(dataRows[i][3] || ''),
+        createdAt: String(dataRows[i][4] || '')
       });
     }
   }
-  
-  // Сортировка: сначала старые комментарии (хронологический порядок)
   comments.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-  
   return { success: true, comments };
 }
 
-// ПОЛУЧЕНИЕ ПОЛЬЗОВАТЕЛЯ ПО ID
+// ==================== ПРОФИЛЬ ====================
+
 function handleGetUserById(data) {
-  const { userId } = data;
-  
-  if (!userId) {
-    return { success: false, error: 'ID пользователя не указан' };
-  }
-  
-  const user = getUserById(userId);
-  
-  if (!user) {
-    return { success: false, error: 'Пользователь не найден' };
-  }
-  
-  // Возвращаем данные (без пароля, т.к. getUserById его не включает)
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const targetId = String(data.userId || userId);
+  const user = getUserById(targetId);
+  if (!user) return { success: false, error: 'Пользователь не найден' };
+
   return { success: true, user };
+}
+
+// ==================== ЗАПРОСЫ ДОСТУПА К ПРИВАТНЫМ ПОСТАМ ====================
+
+function handleRequestAccess(data) {
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const postId = String(data.postId || '').trim();
+  if (!postId) return { success: false, error: 'Не указан ID поста' };
+
+  const sheet = getSheet('AccessRequests');
+  if (!sheet) return { success: false, error: 'Таблица AccessRequests не найдена' };
+
+  // Проверяем, нет ли уже заявки
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][1]) === postId && String(rows[i][2]) === userId) {
+      if (String(rows[i][3]) === 'pending') {
+        return { success: false, error: 'Заявка уже отправлена' };
+      }
+      if (String(rows[i][3]) === 'approved') {
+        return { success: false, error: 'Доступ уже предоставлен' };
+      }
+    }
+  }
+
+  const newId = getNextId(sheet);
+  sheet.appendRow([newId, postId, userId, 'pending', new Date().toISOString()]);
+  return { success: true, requestId: String(newId) };
+}
+
+function handleApproveAccess(data) {
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const requestId = String(data.requestId || '').trim();
+  if (!requestId) return { success: false, error: 'Не указан ID заявки' };
+
+  const sheet = getSheet('AccessRequests');
+  if (!sheet) return { success: false, error: 'Таблица AccessRequests не найдена' };
+
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === requestId) {
+      const postId = String(rows[i][1]);
+
+      // Проверяем, что текущий пользователь — автор поста
+      const postsSheet = getSheet('Posts');
+      const postRows = postsSheet.getDataRange().getValues();
+      let ownerId = null;
+      for (let j = 1; j < postRows.length; j++) {
+        if (String(postRows[j][0]) === postId) {
+          ownerId = String(postRows[j][1]);
+          break;
+        }
+      }
+      if (ownerId !== userId) {
+        return { success: false, error: 'Нет прав подтверждать заявку' };
+      }
+
+      sheet.getRange(i + 1, 4).setValue('approved');
+      return { success: true };
+    }
+  }
+  return { success: false, error: 'Заявка не найдена' };
+}
+
+function handleGetAccessRequests(data) {
+  const userId = requireAuth(data);
+  if (!userId) return { success: false, error: 'Не авторизован' };
+
+  const postId = String(data.postId || '').trim();
+  if (!postId) return { success: false, error: 'Не указан ID поста' };
+
+  const sheet = getSheet('AccessRequests');
+  if (!sheet) return { success: false, error: 'Таблица AccessRequests не найдена' };
+
+  const rows = sheet.getDataRange().getValues();
+  const requests = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][1]) === postId) {
+      requests.push({
+        id: String(rows[i][0]),
+        postId: String(rows[i][1]),
+        requesterId: String(rows[i][2]),
+        status: String(rows[i][3]),
+        createdAt: String(rows[i][4] || '')
+      });
+    }
+  }
+  return { success: true, requests };
+}
+
+function getApprovedPostIds(userId) {
+  const result = new Set();
+  const sheet = getSheet('AccessRequests');
+  if (!sheet) return result;
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][2]) === String(userId) && String(rows[i][3]) === 'approved') {
+      result.add(String(rows[i][1]));
+    }
+  }
+  return result;
 }
