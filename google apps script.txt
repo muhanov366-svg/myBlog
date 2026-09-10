@@ -115,33 +115,14 @@ function doGet(e) {
 }
 
 //   ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-//   Эти функции используются несколькими обработчиками для выполнения
-//   общих задач, таких как работа с таблицами, поиск пользователей и т.д.
-// ====================================================================
-
-/**
- * ПОЛУЧЕНИЕ ТАБЛИЦЫ
- * @param {string} name - Имя таблицы (например, 'Users', 'Posts', 'Comments')
- * @returns {Sheet} - Объект таблицы Google Sheets
- */
+// ПОЛУЧЕНИЕ ТАБЛИЦЫ
 function getSheet(name) {
   // getActiveSpreadsheet() - получает текущую открытую таблицу
   // getSheetByName(name) - ищет таблицу по имени
   return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
 }
 
-/**
- * ГЕНЕРАЦИЯ НОВОГО ID
- * Создает уникальный идентификатор для новой записи
- * @param {Sheet} sheet - Таблица, в которой генерируется ID
- * @returns {number} - Новый уникальный ID
- * ЛОГИКА РАБОТЫ:
- * 1. Если таблица пуста, возвращаем 1
- * 2. Иначе берем последний ID из первой колонки
- * 3. Если это число - увеличиваем на 1
- * 4. Если строка - пытаемся извлечь число из конца строки
- * 5. В крайнем случае используем номер строки
- */
+// ГЕНЕРАЦИЯ НОВОГО ID
 function getNextId(sheet) {
   // Получаем номер последней заполненной строки
   let lastRow = sheet.getLastRow();
@@ -171,16 +152,7 @@ function getNextId(sheet) {
   return lastRow + 1;
 }
 
-/**
- * ПОИСК ПОЛЬЗОВАТЕЛЯ ПО EMAIL
- * Ищет пользователя в таблице Users по адресу электронной почты
- * 
- * @param {string} email - Email пользователя для поиска
- * @returns {Object|null} - Объект пользователя или null, если не найден
- * 
- * ВАЖНО: При поиске приводим все к нижнему регистру и обрезаем пробелы
- * Это делает поиск регистронезависимым
- */
+// ПОИСК ПОЛЬЗОВАТЕЛЯ ПО EMAIL
 function getUserByEmail(email) {
   // Получаем таблицу Users
   const sheet = getSheet('Users');
@@ -211,17 +183,7 @@ function getUserByEmail(email) {
   return null; // Пользователь не найден
 }
 
-/**
- * ПОИСК ПОЛЬЗОВАТЕЛЯ ПО ID
- * Ищет пользователя по его уникальному идентификатору
- * 
- * @param {string|number} id - ID пользователя
- * @returns {Object|null} - Объект пользователя или null
- * 
- * ОТЛИЧИЕ ОТ getUserByEmail: 
- * - Использует ID вместо email
- * - Возвращает меньше полей (без пароля для безопасности)
- */
+// ПОИСК ПОЛЬЗОВАТЕЛЯ ПО ID
 function getUserById(id) {
   const sheet = getSheet('Users');
   if (!sheet) return null;
@@ -243,17 +205,7 @@ function getUserById(id) {
   return null;
 }
 
-/**
- * ОБНОВЛЕНИЕ ПОДПИСОК ПОЛЬЗОВАТЕЛЯ
- * Записывает новый список подписок в таблицу Users
- * 
- * @param {string|number} userId - ID пользователя
- * @param {Array} subsArray - Массив ID пользователей, на которых подписан
- * @returns {boolean} - Успешно ли выполнено обновление
- * 
- * ПРИМЕЧАНИЕ: Подписки хранятся как строка с ID через запятую
- * Например: "1,3,5" означает подписку на пользователей с ID 1, 3 и 5
- */
+// ОБНОВЛЕНИЕ ПОДПИСОК ПОЛЬЗОВАТЕЛЯ
 function updateUserSubscriptions(userId, subsArray) {
   const sheet = getSheet('Users');
   const data = sheet.getDataRange().getValues();
@@ -268,26 +220,8 @@ function updateUserSubscriptions(userId, subsArray) {
   }
   return false; // Пользователь не найден
 }
-
-// ====================================================================
-//   ОБРАБОТЧИКИ ДЕЙСТВИЙ
-//   Эти функции реализуют бизнес-логику приложения
-//   Каждая функция обрабатывает конкретное действие пользователя
-// ====================================================================
-
-/**
- * РЕГИСТРАЦИЯ НОВОГО ПОЛЬЗОВАТЕЛЯ
- * Создает нового пользователя в системе
- * 
- * @param {Object} data - Данные для регистрации
- * @param {string} data.name - Имя пользователя
- * @param {string} data.email - Email (должен быть уникальным)
- * @param {string} data.password - Пароль
- * @returns {Object} - Результат операции
- * 
- * ВАЖНО: В реальном приложении пароль нужно хэшировать!
- * Сейчас пароль хранится в открытом виде - это небезопасно!
- */
+==================================================================
+// РЕГИСТРАЦИЯ НОВОГО ПОЛЬЗОВАТЕЛЯ
 function handleRegister(data) {
   // Деструктуризация - извлекаем нужные поля из объекта
   const { name, email, password } = data;
@@ -310,12 +244,7 @@ function handleRegister(data) {
 
   // Генерируем новый ID
   const newId = getNextId(sheet);
-  
-  // Добавляем новую строку в таблицу
-  // Колонки: [ID, Имя, Email, Пароль, Подписки]
-  // Подписки пока пустые (''), т.к. новый пользователь ни на кого не подписан
-  sheet.appendRow([newId, name, email, password, '']);
-  
+   
   // Возвращаем успешный результат с данными нового пользователя
   return { 
     success: true, 
@@ -323,23 +252,7 @@ function handleRegister(data) {
   };
 }
 
-/**
- * ВХОД В СИСТЕМУ (ЛОГИН)
- * Проверяет учетные данные пользователя
- * 
- * @param {Object} data - Данные для входа
- * @param {string} data.email - Email пользователя
- * @param {string} data.password - Пароль
- * @returns {Object} - Результат с данными пользователя или ошибкой
- * 
- * ПРОЦЕСС АВТОРИЗАЦИИ:
- * 1. Проверяем, что все поля заполнены
- * 2. Ищем пользователя по email
- * 3. Если пользователь не найден - возвращаем ошибку
- * 4. Сравниваем пароли
- * 5. Если пароль не совпадает - возвращаем ошибку
- * 6. Возвращаем данные пользователя (без пароля!)
- */
+// ВХОД В СИСТЕМУ (ЛОГИН)
 function handleLogin(data) {
   const { email, password } = data;
   
@@ -373,21 +286,7 @@ function handleLogin(data) {
   };
 }
 
-/**
- * ДОБАВЛЕНИЕ НОВОГО ПОСТА
- * Создает новый пост в системе
- * 
- * @param {Object} data - Данные поста
- * @param {string} data.userId - ID автора поста
- * @param {string} data.title - Заголовок поста
- * @param {string} data.content - Текст поста
- * @param {string} data.tags - Теги (опционально)
- * @param {string} data.isPrivate - Приватность ('true' или 'false')
- * @param {string} data.allowedUsers - Список ID разрешенных пользователей (через запятую)
- * @returns {Object} - Результат с ID созданного поста
- * 
- * ВАЖНО: Приватные посты видны только автору и указанным пользователям
- */
+// ДОБАВЛЕНИЕ НОВОГО ПОСТА
 function handleAddPost(data) {
   const { userId, title, content, tags, isPrivate, allowedUsers } = data;
   
@@ -409,7 +308,6 @@ function handleAddPost(data) {
   const allowedStr = allowedUsers || '';
   
   // Добавляем пост в таблицу
-  // Колонки: [ID, UserID, Заголовок, Текст, Теги, Приватность, Дата, Разрешенные пользователи]
   sheet.appendRow([
     newId,                         // ID поста
     userId,                        // ID автора
@@ -424,26 +322,7 @@ function handleAddPost(data) {
   return { success: true, postId: newId };
 }
 
-/**
- * ПОЛУЧЕНИЕ СПИСКА ПОСТОВ
- * Возвращает посты с учетом приватности и фильтров
- * 
- * @param {Object} data - Параметры запроса
- * @param {string} data.userId - ID текущего пользователя (для проверки доступа)
- * @param {string} data.isPrivate - Фильтр по приватности ('true' или 'false')
- * @returns {Object} - Результат с массивом постов
- * 
- * СЛОЖНАЯ ЛОГИКА ДОСТУПА:
- * 1. Публичные посты видны всем
- * 2. Приватные посты видны:
- *    - Автору поста
- *    - Пользователям из списка allowedUsers
- * 
- * ФИЛЬТРАЦИЯ:
- * - Если isPrivate='true' - показываем только приватные
- * - Если isPrivate='false' - показываем только публичные
- * - Если не указан - показываем все доступные
- */
+// ПОЛУЧЕНИЕ СПИСКА ПОСТОВ
 function handleGetPosts(data) {
   const sheet = getSheet('Posts');
   if (!sheet) {
@@ -518,24 +397,7 @@ function handleGetPosts(data) {
   return { success: true, posts };
 }
 
-/**
- * РЕДАКТИРОВАНИЕ ПОСТА
- * Изменяет существующий пост
- * 
- * @param {Object} data - Данные для редактирования
- * @param {string} data.postId - ID редактируемого поста
- * @param {string} data.userId - ID пользователя (для проверки прав)
- * @param {string} data.title - Новый заголовок
- * @param {string} data.content - Новый текст
- * @param {string} data.tags - Новые теги
- * @param {string} data.isPrivate - Новая приватность
- * @param {string} data.allowedUsers - Новый список разрешенных пользователей
- * @returns {Object} - Результат операции
- * 
- * ПРОВЕРКА ПРАВ:
- * Редактировать пост может только его автор!
- * Это важное ограничение безопасности
- */
+// РЕДАКТИРОВАНИЕ ПОСТА
 function handleEditPost(data) {
   const { postId, userId, title, content, tags, isPrivate, allowedUsers } = data;
   
@@ -574,19 +436,7 @@ function handleEditPost(data) {
   return { success: false, error: 'Пост не найден' };
 }
 
-/**
- * УДАЛЕНИЕ ПОСТА
- * Полностью удаляет пост из системы
- * 
- * @param {Object} data - Данные для удаления
- * @param {string} data.postId - ID поста для удаления
- * @param {string} data.userId - ID пользователя (для проверки прав)
- * @returns {Object} - Результат операции
- * 
- * ПРОВЕРКА ПРАВ:
- * Удалять пост может только его автор!
- * Это важно для безопасности и контроля над контентом
- */
+// УДАЛЕНИЕ ПОСТА
 function handleDeletePost(data) {
   const { postId, userId } = data;
   
@@ -617,18 +467,7 @@ function handleDeletePost(data) {
   return { success: false, error: 'Пост не найден' };
 }
 
-/**
- * ПОДПИСКА НА ПОЛЬЗОВАТЕЛЯ
- * Добавляет пользователя в список подписок текущего пользователя
- * 
- * @param {Object} data - Данные для подписки
- * @param {string} data.currentUserId - ID текущего пользователя (кто подписывается)
- * @param {string} data.targetUserId - ID пользователя, на которого подписываются
- * @returns {Object} - Результат с обновленным списком подписок
- * 
- * ВАЖНО: Нельзя подписаться на самого себя!
- * В текущей реализации нет такой проверки, рекомендуется добавить
- */
+// ПОДПИСКА НА ПОЛЬЗОВАТЕЛЯ
 function handleSubscribe(data) {
   const { currentUserId, targetUserId } = data;
   
@@ -666,15 +505,7 @@ function handleSubscribe(data) {
   return { success: false, error: 'Пользователь не найден' };
 }
 
-/**
- * ОТПИСКА ОТ ПОЛЬЗОВАТЕЛЯ
- * Удаляет пользователя из списка подписок
- * 
- * @param {Object} data - Данные для отписки
- * @param {string} data.currentUserId - ID текущего пользователя
- * @param {string} data.targetUserId - ID пользователя, от которого отписываются
- * @returns {Object} - Результат с обновленным списком подписок
- */
+// ОТПИСКА ОТ ПОЛЬЗОВАТЕЛЯ
 function handleUnsubscribe(data) {
   const { currentUserId, targetUserId } = data;
   
@@ -708,21 +539,7 @@ function handleUnsubscribe(data) {
   return { success: false, error: 'Пользователь не найден' };
 }
 
-/**
- * ДОБАВЛЕНИЕ КОММЕНТАРИЯ
- * Создает новый комментарий к посту
- * 
- * @param {Object} data - Данные комментария
- * @param {string} data.postId - ID поста, к которому оставляют комментарий
- * @param {string} data.userId - ID автора комментария
- * @param {string} data.text - Текст комментария
- * @returns {Object} - Результат с ID созданного комментария
- * 
- * ОСОБЕННОСТИ:
- * - Комментарии могут оставлять только авторизованные пользователи
- * - Время создания автоматически проставляется на сервере
- * - Нет ограничений на длину текста (кроме ограничений Google Sheets)
- */
+// ДОБАВЛЕНИЕ КОММЕНТАРИЯ
 function handleAddComment(data) {
   const { postId, userId, text } = data;
   
@@ -748,22 +565,7 @@ function handleAddComment(data) {
   return { success: true, commentId: newId };
 }
 
-/**
- * ПОЛУЧЕНИЕ КОММЕНТАРИЕВ ПОСТА
- * Возвращает все комментарии для указанного поста
- * 
- * @param {Object} data - Параметры запроса
- * @param {string} data.postId - ID поста
- * @returns {Object} - Результат с массивом комментариев
- * 
- * СОРТИРОВКА:
- * Комментарии сортируются по дате создания (от старых к новым)
- * Это создает естественный хронологический порядок в диалоге
- * 
- * БЕЗОПАСНОСТЬ:
- * Комментарии доступны всем, кто может видеть пост
- * Проверка доступа к посту должна выполняться на клиенте
- */
+// ПОЛУЧЕНИЕ КОММЕНТАРИЕВ ПОСТА
 function handleGetComments(data) {
   const { postId } = data;
   
@@ -798,22 +600,7 @@ function handleGetComments(data) {
   return { success: true, comments };
 }
 
-/**
- * ПОЛУЧЕНИЕ ПОЛЬЗОВАТЕЛЯ ПО ID
- * Возвращает данные пользователя без пароля
- * 
- * @param {Object} data - Параметры запроса
- * @param {string} data.userId - ID пользователя
- * @returns {Object} - Результат с данными пользователя
- * 
- * ИСПОЛЬЗОВАНИЕ:
- * - Просмотр профиля другого пользователя
- * - Получение информации об авторе поста или комментария
- * 
- * БЕЗОПАСНОСТЬ:
- * Пароль не возвращается даже по запросу!
- * Это защищает учетные данные пользователей
- */
+// ПОЛУЧЕНИЕ ПОЛЬЗОВАТЕЛЯ ПО ID
 function handleGetUserById(data) {
   const { userId } = data;
   
